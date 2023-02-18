@@ -915,6 +915,7 @@ class BaseRepository(_Repository):
         resolve any conflicts and prepare a commit.
 
         Parameters:
+
         id
             The id to merge into HEAD
         favor
