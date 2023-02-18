@@ -2445,7 +2445,6 @@ PyMethodDef Repository_methods[] = {
     METHOD(Repository, merge_base_many, METH_VARARGS),
     METHOD(Repository, merge_base_octopus, METH_VARARGS),
     METHOD(Repository, merge_analysis, METH_VARARGS),
-    METHOD(Repository, merge, METH_O),
     METHOD(Repository, cherrypick, METH_O),
     METHOD(Repository, apply, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, applies, METH_VARARGS | METH_KEYWORDS),
