@@ -711,18 +711,6 @@ out:
     return py_result;
 }
 
-PyDoc_STRVAR(Repository_merge__doc__,
-  "merge(id: Oid)\n"
-  "\n"
-  "Merges the given id into HEAD.\n"
-  "\n"
-  "Merges the given commit(s) into HEAD, writing the results into the\n"
-  "working directory. Any changes are staged for commit and any conflicts\n"
-  "are written to the index. Callers should inspect the repository's\n"
-  "index after this completes, resolve any conflicts and prepare a\n"
-  "commit.");
-
-
 PyDoc_STRVAR(Repository_cherrypick__doc__,
   "cherrypick(id: Oid)\n"
   "\n"

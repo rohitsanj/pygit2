@@ -905,11 +905,16 @@ class BaseRepository(_Repository):
 
         return Index.from_c(self, cindex)
 
-    def merge(self, id, favor="normal"):
+    def merge(self, id, favor="normal", flags=None, file_flags=None):
         """
-        TODO
+        Merges the given id into HEAD.
+
+        Merges the given commit(s) into HEAD, writing the results into the working directory. 
+        Any changes are staged for commit and any conflicts are written to the index. 
+        Callers should inspect the repository's index after this completes, 
+        resolve any conflicts and prepare a commit.
         """
-        merge_opts = self._merge_options(favor)
+        merge_opts = self._merge_options(favor, flags=flags or {}, file_flags=file_flags or {})
 
         checkout_opts = ffi.new("git_checkout_options *")
         C.git_checkout_init_options(checkout_opts, 1)
