@@ -905,6 +905,29 @@ class BaseRepository(_Repository):
 
         return Index.from_c(self, cindex)
 
+    def merge(self, id, favor="normal"):
+        """
+        TODO
+        """
+        merge_opts = self._merge_options(favor)
+
+        checkout_opts = ffi.new("git_checkout_options *")
+        C.git_checkout_init_options(checkout_opts, 1)
+        checkout_opts.checkout_strategy = C.GIT_CHECKOUT_SAFE | C.GIT_CHECKOUT_RECREATE_MISSING
+
+        c_id = ffi.new("git_oid *")
+        ffi.buffer(c_id)[:] = id.raw[:]
+
+        commit_ptr = ffi.new("git_annotated_commit **")
+        err = C.git_annotated_commit_lookup(commit_ptr, self._repo, c_id)
+        check_error(err)
+
+        err = C.git_merge(self._repo, commit_ptr, 1, merge_opts, checkout_opts)
+        check_error(err)
+
+        C.git_annotated_commit_free(commit_ptr[0])
+
+
     #
     # Describe
     #
