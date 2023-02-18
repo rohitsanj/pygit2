@@ -918,6 +918,7 @@ class BaseRepository(_Repository):
 
         id
             The id to merge into HEAD
+
         favor
             How to deal with file-level conflicts. Can be one of
 
