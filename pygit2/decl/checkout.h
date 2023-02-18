@@ -1,9 +1,4 @@
 typedef enum {
-	GIT_CHECKOUT_SAFE = (1u << 0),
-	GIT_CHECKOUT_RECREATE_MISSING = (1u << 2),
-} git_checkout_strategy_t;
-
-typedef enum {
 	GIT_CHECKOUT_NOTIFY_NONE      = 0,
 	GIT_CHECKOUT_NOTIFY_CONFLICT  = 1,
 	GIT_CHECKOUT_NOTIFY_DIRTY     = 2,
