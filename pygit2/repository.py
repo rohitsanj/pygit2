@@ -913,15 +913,22 @@ class BaseRepository(_Repository):
         Any changes are staged for commit and any conflicts are written to the index. 
         Callers should inspect the repository's index after this completes, 
         resolve any conflicts and prepare a commit.
+
         """
+        if id is None:
+            raise TypeError
+
+        if isinstance(id, (str, Oid)):
+            id = self[id]
+
+        c_id = ffi.new("git_oid *")
+        ffi.buffer(c_id)[:] = id.raw[:]
+
         merge_opts = self._merge_options(favor, flags=flags or {}, file_flags=file_flags or {})
 
         checkout_opts = ffi.new("git_checkout_options *")
         C.git_checkout_init_options(checkout_opts, 1)
         checkout_opts.checkout_strategy = C.GIT_CHECKOUT_SAFE | C.GIT_CHECKOUT_RECREATE_MISSING
-
-        c_id = ffi.new("git_oid *")
-        ffi.buffer(c_id)[:] = id.raw[:]
 
         commit_ptr = ffi.new("git_annotated_commit **")
         err = C.git_annotated_commit_lookup(commit_ptr, self._repo, c_id)
