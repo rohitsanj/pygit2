@@ -23,7 +23,6 @@ Example::
     >>> repo.merge(other_branch_tip)
     >>> repo.merge(other_branch_tip, favor='ours')
     >>> repo.merge(other_branch_tip, flags={'find_renames': False})
-    >>> repo.merge(other_branch_tip, flags={'find_renames': False})
 
 You can now inspect the index file for conflicts and get back to the
 user to resolve if there are. Once there are no conflicts left, you
