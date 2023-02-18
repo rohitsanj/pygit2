@@ -928,7 +928,7 @@ class BaseRepository(_Repository):
 
         checkout_opts = ffi.new("git_checkout_options *")
         C.git_checkout_init_options(checkout_opts, 1)
-        checkout_opts.checkout_strategy = C.GIT_CHECKOUT_SAFE | C.GIT_CHECKOUT_RECREATE_MISSING
+        checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE | GIT_CHECKOUT_RECREATE_MISSING
 
         commit_ptr = ffi.new("git_annotated_commit **")
         err = C.git_annotated_commit_lookup(commit_ptr, self._repo, c_id)
