@@ -919,7 +919,7 @@ class BaseRepository(_Repository):
             raise TypeError
 
         if isinstance(id, (str, Oid)):
-            id = self[id]
+            id = self[id].id
 
         c_id = ffi.new("git_oid *")
         ffi.buffer(c_id)[:] = id.raw[:]
