@@ -34,8 +34,9 @@ from pygit2 import GIT_MERGE_ANALYSIS_FASTFORWARD
 import pygit2
 
 
-def test_merge_none(mergerepo):
-    with pytest.raises(TypeError): mergerepo.merge(None)
+@pytest.mark.parametrize("id", [None, 42])
+def test_merge_invalid_type(mergerepo, id):
+    with pytest.raises(TypeError): mergerepo.merge(id)
 
 def test_merge_analysis_uptodate(mergerepo):
     branch_head_hex = '5ebeeebb320790caf276b9fc8b24546d63316533'
@@ -138,6 +139,22 @@ def test_merge_remove_conflicts(mergerepo):
     assert '.gitignore' not in conflicts
     assert idx.conflicts is None
 
+
+@pytest.mark.parametrize("favor", [
+    'ours',
+    'theirs',
+    'union',
+])
+def test_merge_favor(mergerepo, favor):
+    branch_head_hex = '1b2bae55ac95a4be3f8983b86cd579226d0eb247'
+    mergerepo.merge(branch_head_hex, favor=favor)
+
+    assert mergerepo.index.conflicts is None
+
+def test_merge_fail_on_conflict(mergerepo):
+    branch_head_hex = '1b2bae55ac95a4be3f8983b86cd579226d0eb247'
+    with pytest.raises(pygit2.GitError):
+        mergerepo.merge(branch_head_hex, flags={'fail_on_conflict': True})
 
 def test_merge_commits(mergerepo):
     branch_head_hex = '03490f16b15a09913edb3a067a3dc67fbb8d41f1'
