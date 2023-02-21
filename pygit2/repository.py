@@ -28,15 +28,18 @@ from io import BytesIO
 from string import hexdigits
 import tarfile
 from time import time
+import typing
 import warnings
 
 # Import from pygit2
 from ._pygit2 import Repository as _Repository, init_file_backend
 from ._pygit2 import Oid, GIT_OID_HEXSZ, GIT_OID_MINPREFIXLEN
-from ._pygit2 import GIT_CHECKOUT_SAFE, GIT_CHECKOUT_RECREATE_MISSING, GIT_DIFF_NORMAL
+from ._pygit2 import GIT_DIFF_NORMAL
 from ._pygit2 import GIT_FILEMODE_LINK
 from ._pygit2 import GIT_BRANCH_LOCAL, GIT_BRANCH_REMOTE, GIT_BRANCH_ALL
 from ._pygit2 import GIT_REF_SYMBOLIC
+from ._pygit2 import GIT_REFERENCES_ALL, GIT_REFERENCES_BRANCHES, GIT_REFERENCES_TAGS
+from ._pygit2 import GIT_CHECKOUT_SAFE, GIT_CHECKOUT_RECREATE_MISSING
 from ._pygit2 import Reference, Tree, Commit, Blob, Signature
 from ._pygit2 import InvalidSpecError
 
@@ -47,7 +50,7 @@ from .ffi import ffi, C
 from .index import Index
 from .remote import RemoteCollection
 from .blame import Blame
-from .utils import to_bytes, StrArray
+from .utils import to_bytes
 from .submodule import Submodule
 from .packbuilder import PackBuilder
 
@@ -214,7 +217,7 @@ class BaseRepository(_Repository):
         return self.git_object_lookup_prefix(key) is not None
 
     def __repr__(self):
-        return "pygit2.Repository(%r)" % self.path
+        return f"pygit2.Repository({repr(self.path)})"
 
     #
     # Remotes
@@ -290,6 +293,16 @@ class BaseRepository(_Repository):
 
         return self.create_reference_symbolic(name, target, force,
                                               message=message)
+
+    def listall_references(self) -> typing.List[str]:
+        """Return a list with all the references in the repository.
+        """
+        return list(x.name for x in self.references.iterator())
+
+    def listall_reference_objects(self) -> typing.List[Reference]:
+        """Return a list with all the reference objects in the repository.
+        """
+        return list(x for x in self.references.iterator())
 
     def resolve_refish(self, refish):
         """Convert a reference-like short name "ref-ish" to a valid
@@ -459,7 +472,7 @@ class BaseRepository(_Repository):
             try:
                 obj = obj.peel(Tree)
             except Exception:
-                raise TypeError('unexpected "%s"' % type(obj))
+                raise TypeError(f'unexpected "{type(obj)}"')
 
         return obj
 
@@ -679,18 +692,21 @@ class BaseRepository(_Repository):
         for k, v in merged_dict.items():
             enum = mapping.get(k, None)
             if enum is None:
-                raise ValueError("unknown %s: %s" % (label, k))
+                raise ValueError(f"unknown {label}: {k}")
             if v:
                 bitmask |= enum
         return bitmask
 
     @classmethod
-    def _merge_options(cls, favor='normal', flags={}, file_flags={}):
-        """Return a 'git_merge_opts *'"""
+    def _merge_options(cls, favor='normal', flags=None, file_flags=None):
+        """Return a 'git_merge_opts *'
+        """
+        flags = flags or {}
+        file_flags = file_flags or {}
 
         favor_val = cls._FAVOR_TO_ENUM.get(favor, None)
         if favor_val is None:
-            raise ValueError("unknown favor: %s" % favor)
+            raise ValueError(f"unknown favor: {favor}")
 
         flags_bitmask = Repository._flag_dict_to_bitmask(
             flags,
@@ -748,7 +764,7 @@ class BaseRepository(_Repository):
 
         return ret
 
-    def merge_commits(self, ours, theirs, favor='normal', flags={}, file_flags={}):
+    def merge_commits(self, ours, theirs, favor='normal', flags=None, file_flags=None):
         """
         Merge two arbitrary commits.
 
@@ -801,6 +817,8 @@ class BaseRepository(_Repository):
         Both "ours" and "theirs" can be any object which peels to a commit or
         the id (string or Oid) of an object which peels to a commit.
         """
+        flags = flags or {}
+        file_flags = file_flags or {}
 
         ours_ptr = ffi.new('git_commit **')
         theirs_ptr = ffi.new('git_commit **')
@@ -824,7 +842,7 @@ class BaseRepository(_Repository):
 
         return Index.from_c(self, cindex)
 
-    def merge_trees(self, ancestor, ours, theirs, favor='normal', flags={}, file_flags={}):
+    def merge_trees(self, ancestor, ours, theirs, favor='normal', flags=None, file_flags=None):
         """
         Merge two trees.
 
@@ -877,6 +895,8 @@ class BaseRepository(_Repository):
             * patience. Use the "patience diff" algorithm
             * minimal. Take extra time to find minimal diff
         """
+        flags = flags or {}
+        file_flags = file_flags or {}
 
         ancestor_ptr = ffi.new('git_tree **')
         ours_ptr = ffi.new('git_tree **')
@@ -904,6 +924,77 @@ class BaseRepository(_Repository):
         check_error(err)
 
         return Index.from_c(self, cindex)
+
+    def merge(self, id, favor="normal", flags=None, file_flags=None):
+        """
+        Merges the given id into HEAD.
+
+        Merges the given commit(s) into HEAD, writing the results into the working directory.
+        Any changes are staged for commit and any conflicts are written to the index.
+        Callers should inspect the repository's index after this completes,
+        resolve any conflicts and prepare a commit.
+
+        Parameters:
+
+        id
+            The id to merge into HEAD
+
+        favor
+            How to deal with file-level conflicts. Can be one of
+
+            * normal (default). Conflicts will be preserved.
+            * ours. The "ours" side of the conflict region is used.
+            * theirs. The "theirs" side of the conflict region is used.
+            * union. Unique lines from each side will be used.
+
+            For all but NORMAL, the index will not record a conflict.
+
+        flags
+            A dict of str: bool to turn on or off functionality while merging.
+            If a key is not present, the default will be used. The keys are:
+
+            * find_renames. Detect file renames. Defaults to True.
+            * fail_on_conflict. If a conflict occurs, exit immediately instead
+              of attempting to continue resolving conflicts.
+            * skip_reuc. Do not write the REUC extension on the generated index.
+            * no_recursive. If the commits being merged have multiple merge
+              bases, do not build a recursive merge base (by merging the
+              multiple merge bases), instead simply use the first base.
+
+        file_flags
+            A dict of str: bool to turn on or off functionality while merging.
+            If a key is not present, the default will be used. The keys are:
+
+            * standard_style. Create standard conflicted merge files.
+            * diff3_style. Create diff3-style file.
+            * simplify_alnum. Condense non-alphanumeric regions for simplified
+              diff file.
+            * ignore_whitespace. Ignore all whitespace.
+            * ignore_whitespace_change. Ignore changes in amount of whitespace.
+            * ignore_whitespace_eol. Ignore whitespace at end of line.
+            * patience. Use the "patience diff" algorithm
+            * minimal. Take extra time to find minimal diff
+        """
+        if not isinstance(id, (str, Oid)):
+            raise TypeError(f'expected oid (string or <Oid>) got {type(id)}')
+
+        id = self[id].id
+        c_id = ffi.new("git_oid *")
+        ffi.buffer(c_id)[:] = id.raw[:]
+
+        merge_opts = self._merge_options(favor, flags=flags or {}, file_flags=file_flags or {})
+
+        checkout_opts = ffi.new("git_checkout_options *")
+        C.git_checkout_init_options(checkout_opts, 1)
+        checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE | GIT_CHECKOUT_RECREATE_MISSING
+
+        commit_ptr = ffi.new("git_annotated_commit **")
+        err = C.git_annotated_commit_lookup(commit_ptr, self._repo, c_id)
+        check_error(err)
+
+        err = C.git_merge(self._repo, commit_ptr, 1, merge_opts, checkout_opts)
+        C.git_annotated_commit_free(commit_ptr[0])
+        check_error(err)
 
     #
     # Describe
@@ -1495,7 +1586,7 @@ class Branches:
             branch = self._repository.lookup_branch(name, GIT_BRANCH_REMOTE)
 
         if branch is None or not self._valid(branch):
-            raise KeyError('Branch not found: {}'.format(name))
+            raise KeyError(f'Branch not found: {name}')
 
         return branch
 
@@ -1549,8 +1640,42 @@ class References:
             return None
 
     def __iter__(self):
-        for ref_name in self._repository.listall_references():
-            yield ref_name
+        iter = self._repository.references_iterator_init()
+        while True:
+            ref = self._repository.references_iterator_next(iter)
+            if ref:
+                yield ref.name
+            else:
+                return
+
+    def iterator(self, references_return_type:int = GIT_REFERENCES_ALL):
+        """ Creates a new iterator and fetches references for a given repository.
+
+        Can also filter and pass all refs or only branches or only tags.
+
+        Parameters:
+
+        references_return_type: int
+            Optional specifier to filter references. By default, all references are
+            returned.
+
+            The following values are accepted:
+            0 -> GIT_REFERENCES_ALL, fetches all refs, this is the default
+            1 -> GIT_REFERENCES_BRANCHES, fetches only branches
+            2 -> GIT_REFERENCES_TAGS, fetches only tags
+
+        TODO: Add support for filtering by reference types notes and remotes.
+        """
+
+        if references_return_type not in (GIT_REFERENCES_ALL, GIT_REFERENCES_BRANCHES, GIT_REFERENCES_TAGS):
+            raise ValueError("Parameter references_return_type is invalid")
+        iter = self._repository.references_iterator_init()
+        while True:
+            ref = self._repository.references_iterator_next(iter, references_return_type)
+            if ref:
+                yield ref
+            else:
+                return
 
     def create(self, name, target, force=False):
         return self._repository.create_reference(name, target, force)

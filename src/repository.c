@@ -63,6 +63,7 @@ extern PyTypeObject RevSpecType;
 extern PyTypeObject NoteType;
 extern PyTypeObject NoteIterType;
 extern PyTypeObject StashType;
+extern PyTypeObject RefsIteratorType;
 
 /* forward-declaration for Repsository._from_c() */
 PyTypeObject RepositoryType;
@@ -711,47 +712,6 @@ out:
     return py_result;
 }
 
-PyDoc_STRVAR(Repository_merge__doc__,
-  "merge(id: Oid)\n"
-  "\n"
-  "Merges the given id into HEAD.\n"
-  "\n"
-  "Merges the given commit(s) into HEAD, writing the results into the\n"
-  "working directory. Any changes are staged for commit and any conflicts\n"
-  "are written to the index. Callers should inspect the repository's\n"
-  "index after this completes, resolve any conflicts and prepare a\n"
-  "commit.");
-
-PyObject *
-Repository_merge(Repository *self, PyObject *py_oid)
-{
-    git_annotated_commit *commit;
-    git_oid oid;
-    int err;
-    size_t len;
-    git_merge_options merge_opts = GIT_MERGE_OPTIONS_INIT;
-    git_checkout_options checkout_opts = GIT_CHECKOUT_OPTIONS_INIT;
-
-    len = py_oid_to_git_oid(py_oid, &oid);
-    if (len == 0)
-        return NULL;
-
-    err = git_annotated_commit_lookup(&commit, self->repo, &oid);
-    if (err < 0)
-        return Error_set(err);
-
-    checkout_opts.checkout_strategy = GIT_CHECKOUT_SAFE | GIT_CHECKOUT_RECREATE_MISSING;
-    err = git_merge(self->repo,
-                    (const git_annotated_commit **)&commit, 1,
-                    &merge_opts, &checkout_opts);
-
-    git_annotated_commit_free(commit);
-    if (err < 0)
-        return Error_set(err);
-
-    Py_RETURN_NONE;
-}
-
 PyDoc_STRVAR(Repository_cherrypick__doc__,
   "cherrypick(id: Oid)\n"
   "\n"
@@ -1121,7 +1081,7 @@ Repository_create_commit_string(Repository *self, PyObject *args)
 {
     Signature *py_author, *py_committer;
     PyObject *py_oid, *py_message, *py_parents, *py_parent;
-    PyObject *str;
+    PyObject *str = NULL;
     char *encoding = NULL;
     git_oid oid;
     git_tree *tree = NULL;
@@ -1301,8 +1261,13 @@ to_path_f(const char * x) {
     return to_path(x);
 }
 
+PyDoc_STRVAR(Repository_raw_listall_references__doc__,
+  "raw_listall_references() -> list[bytes]\n"
+  "\n"
+  "Return a list with all the references in the repository.");
+
 static PyObject *
-Repository_listall_references_impl(Repository *self, PyObject *args, PyObject *(*item_trans)(const char *))
+Repository_raw_listall_references(Repository *self, PyObject *args)
 {
     git_strarray c_result;
     PyObject *py_result, *py_string;
@@ -1321,7 +1286,7 @@ Repository_listall_references_impl(Repository *self, PyObject *args, PyObject *(
 
     /* Fill it */
     for (index=0; index < c_result.count; index++) {
-        py_string = item_trans(c_result.strings[index]);
+        py_string = PyBytes_FromString(c_result.strings[index]);
         if (py_string == NULL) {
             Py_CLEAR(py_result);
             goto out;
@@ -1334,78 +1299,93 @@ out:
     return py_result;
 }
 
-PyDoc_STRVAR(Repository_listall_references__doc__,
-  "listall_references() -> list[str]\n"
-  "\n"
-  "Return a list with all the references in the repository.");
 
 PyObject *
-Repository_listall_references(Repository *self, PyObject *args)
-{
-    return Repository_listall_references_impl(self, args, to_path_f);
+wrap_references_iterator(git_reference_iterator *iter) {
+    RefsIterator *py_refs_iter = PyObject_New(RefsIterator , &ReferenceType);
+    if (py_refs_iter)
+        py_refs_iter->iterator = iter;
+
+    return (PyObject *)py_refs_iter;
 }
 
-PyDoc_STRVAR(Repository_raw_listall_references__doc__,
-  "raw_listall_references() -> list[bytes]\n"
-  "\n"
-  "Return a list with all the references in the repository.");
-
-PyObject *
-Repository_raw_listall_references(Repository *self, PyObject *args)
+void
+References_iterator_dealloc(RefsIterator *iter)
 {
-    return Repository_listall_references_impl(self, args, PyBytes_FromString);
+    git_reference_iterator_free(iter->iterator);
+    Py_TYPE(iter)->tp_free((PyObject *)iter);
 }
 
-
-PyDoc_STRVAR(Repository_listall_reference_objects__doc__,
-  "listall_reference_objects() -> list[Reference]\n"
+PyDoc_STRVAR(Repository_references_iterator_init__doc__,
+  "references_iterator_init() -> git_reference_iterator\n"
   "\n"
-  "Return a list with all the reference objects in the repository.");
+  "Creates and returns an iterator for references.");
 
 PyObject *
-Repository_listall_reference_objects(Repository *self, PyObject *args)
+Repository_references_iterator_init(Repository *self, PyObject *args)
 {
-    git_reference_iterator *iter;
-    git_reference *ref = NULL;
     int err;
-    PyObject *list;
+    git_reference_iterator *iter;
+    RefsIterator *refs_iter;
 
-    list = PyList_New(0);
-    if (list == NULL)
+    refs_iter = PyObject_New(RefsIterator, &RefsIteratorType);
+    if (refs_iter == NULL) {
         return NULL;
+    }
 
     if ((err = git_reference_iterator_new(&iter, self->repo)) < 0)
         return Error_set(err);
 
-    while ((err = git_reference_next(&ref, iter)) == 0) {
-        PyObject *py_ref = wrap_reference(ref, self);
-        if (py_ref == NULL)
-            goto error;
-
-        err = PyList_Append(list, py_ref);
-        Py_DECREF(py_ref);
-
-        if (err < 0)
-            goto error;
-    }
-
-    git_reference_iterator_free(iter);
-    if (err == GIT_ITEROVER)
-        err = 0;
-
-    if (err < 0) {
-        Py_CLEAR(list);
-        return Error_set(err);
-    }
-
-    return list;
-
-error:
-    git_reference_iterator_free(iter);
-    Py_CLEAR(list);
-    return NULL;
+    refs_iter->iterator = iter;
+    return (PyObject*)refs_iter;
 }
 
+PyDoc_STRVAR(Repository_references_iterator_next__doc__,
+  "references_iterator_next(git_reference_iterator iter,\n"
+  "references_return_type int = GIT_REFERENCES_ALL) -> Reference\n"
+  "\n"
+  "Returns next reference object for repository. Optionally, can filter \n"
+  "based on value of references_return_type.\n"
+  "Acceptable values of references_return_type:\n"
+  "0 -> returns all refs, this is the default\n"
+  "1 -> returns all branches\n"
+  "2 -> returns all tags\n"
+  "all other values -> will return a Py_None object");
+
+PyObject *
+Repository_references_iterator_next(Repository *self, PyObject *args)
+{
+    git_reference *ref;
+    git_reference_iterator *git_iter;
+    PyObject *iter;
+    int references_return_type = GIT_REFERENCES_ALL;
+
+    if (!PyArg_ParseTuple(args, "O|i", &iter, &references_return_type))
+        return NULL;
+    git_iter = ((RefsIterator *) iter)->iterator;
+
+    int err;
+    while (0 == (err = git_reference_next(&ref, git_iter))) {
+        switch(references_return_type) {
+            case GIT_REFERENCES_ALL:
+                return wrap_reference(ref, self);
+            case GIT_REFERENCES_BRANCHES:
+                if (git_reference_is_branch(ref)) {
+                    return wrap_reference(ref, self);
+                }
+                break;
+            case GIT_REFERENCES_TAGS:
+                if (git_reference_is_tag(ref)) {
+                    return wrap_reference(ref, self);
+                }
+                break;
+        }
+    }
+    if (err == GIT_ITEROVER) {
+        Py_RETURN_NONE;
+    }
+    return Error_set(err);
+}
 
 static PyObject *
 Repository_listall_branches_impl(Repository *self, PyObject *args, PyObject *(*item_trans)(const char *))
@@ -1796,7 +1776,6 @@ PyDoc_STRVAR(Repository_status__doc__,
 PyObject *
 Repository_status(Repository *self, PyObject *args, PyObject *kw)
 {
-    PyObject *dict;
     int err;
     size_t len, i;
     git_status_list *list;
@@ -1806,9 +1785,8 @@ Repository_status(Repository *self, PyObject *args, PyObject *kw)
 
     PyObject* ignored = Py_False;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "|sO", kwlist,
-                                     &untracked_files, &ignored))
-        goto error;
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "|sO", kwlist, &untracked_files, &ignored))
+        return NULL;
 
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.flags = GIT_STATUS_OPT_DEFAULTS;
@@ -1834,7 +1812,7 @@ Repository_status(Repository *self, PyObject *args, PyObject *kw)
     if (err < 0)
         return Error_set(err);
 
-    dict = PyDict_New();
+    PyObject *dict = PyDict_New();
     if (dict == NULL)
         goto error;
 
@@ -2486,16 +2464,15 @@ PyMethodDef Repository_methods[] = {
     METHOD(Repository, merge_base_many, METH_VARARGS),
     METHOD(Repository, merge_base_octopus, METH_VARARGS),
     METHOD(Repository, merge_analysis, METH_VARARGS),
-    METHOD(Repository, merge, METH_O),
     METHOD(Repository, cherrypick, METH_O),
     METHOD(Repository, apply, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, applies, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, create_reference_direct, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, create_reference_symbolic, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, compress_references, METH_NOARGS),
-    METHOD(Repository, listall_references, METH_NOARGS),
     METHOD(Repository, raw_listall_references, METH_NOARGS),
-    METHOD(Repository, listall_reference_objects, METH_NOARGS),
+    METHOD(Repository, references_iterator_init, METH_NOARGS),
+    METHOD(Repository, references_iterator_next, METH_VARARGS),
     METHOD(Repository, listall_submodules, METH_NOARGS),
     METHOD(Repository, init_submodules, METH_VARARGS | METH_KEYWORDS),
     METHOD(Repository, lookup_reference, METH_O),
@@ -2592,4 +2569,36 @@ PyTypeObject RepositoryType = {
     (initproc)Repository_init,                 /* tp_init           */
     0,                                         /* tp_alloc          */
     0,                                         /* tp_new            */
+};
+
+PyDoc_STRVAR(RefsIterator__doc__, "References iterator.");
+
+PyTypeObject RefsIteratorType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "_pygit2.RefsIterator",                    /* tp_name           */
+    sizeof(Repository),                        /* tp_basicsize      */
+    0,                                         /* tp_itemsize       */
+    (destructor)References_iterator_dealloc,   /* tp_dealloc        */
+    0,                                         /* tp_print          */
+    0,                                         /* tp_getattr        */
+    0,                                         /* tp_setattr        */
+    0,                                         /* tp_compare        */
+    0,                                         /* tp_repr           */
+    0,                                         /* tp_as_number      */
+    0,                                         /* tp_as_sequence    */
+    0,                                         /* tp_as_mapping     */
+    0,                                         /* tp_hash           */
+    0,                                         /* tp_call           */
+    0,                                         /* tp_str            */
+    0,                                         /* tp_getattro       */
+    0,                                         /* tp_setattro       */
+    0,                                         /* tp_as_buffer      */
+    Py_TPFLAGS_DEFAULT,                        /* tp_flags          */
+    RefsIterator__doc__,                       /* tp_doc            */
+    0,                                         /* tp_traverse       */
+    0,                                         /* tp_clear          */
+    0,                                         /* tp_richcompare    */
+    0,                                         /* tp_weaklistoffset */
+    PyObject_SelfIter,                         /* tp_iter           */
+    (iternextfunc)Repository_references_iterator_next, /* tp_iternext */
 };
